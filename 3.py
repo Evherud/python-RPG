@@ -45,16 +45,12 @@ class Player:
             'vitality': 5,
             'stat_points': 0
         }
+        self.sword = PlayerSword(self, 0)  # Initialize the player's sword
 
     @property
     def speed(self):
         # Speed increases with agility
         return self.base_speed + self.stats['agility'] * 0.2
-
-    @property
-    def aura_radius(self):
-        # Aura radius scales with strength
-        return 50 + self.stats['strength'] * 2
 
     @property
     def max_health(self):
@@ -84,6 +80,9 @@ class Player:
             self.stats['vitality'] += vitality
             self.stats['stat_points'] -= (strength + agility + intelligence + vitality)
             print(f"Distributed points: STR {strength}, AGI {agility}, INT {intelligence}, VIT {vitality}. Remaining points: {self.stats['stat_points']}")
+
+    def update_sword(self):
+        self.sword.update()
 
 # Base Mob class
 class Mob:
@@ -262,6 +261,7 @@ def main():
             player.distribute_stat_points(vitality=1)
 
         player.move(dx, dy)
+        player.update_sword()
 
         # Check for screen transition
         if player.rect.x < 0:
@@ -318,21 +318,23 @@ def main():
                 print(f"Health potion collected! Health: {player.health}")
                 potions.remove(potion)
 
-        # Aura effect
-        aura_radius = player.aura_radius
+        # Sword effect
+        sword_end_x, sword_end_y = player.sword.get_end_position()
         for mob in mobs[:]:
-            distance = math.hypot(player.rect.centerx - mob.rect.centerx, player.rect.centery - mob.rect.centery)
-            if distance < aura_radius:
-                mob.hp -= 0.1 * player.stats['strength']  # Aura damage scales with strength
+            if mob.rect.clipline(player.rect.centerx, player.rect.centery, sword_end_x, sword_end_y):
+                mob.hp -= 0.1 * player.stats['strength']  # Sword damage scales with strength
                 if mob.hp <= 0:
                     handle_mob_death(mob, player, mobs, potions)
 
         # Draw everything
         window.fill(BLACK)
         pygame.draw.rect(window, player.color, player.rect)
+        # Draw the player's spinning sword
+        pygame.draw.line(window, RED, player.rect.center, (int(sword_end_x), int(sword_end_y)), 3)
+
         for mob in mobs:
             pygame.draw.rect(window, mob.color, mob.rect)
-            # Draw the spinning sword
+            # Draw the spinning sword for SwordMobs
             if isinstance(mob, SwordMob):
                 sword_x, sword_y = mob.sword.get_position()
                 pygame.draw.circle(window, RED, (int(sword_x), int(sword_y)), 5)
@@ -341,9 +343,6 @@ def main():
             pygame.draw.rect(window, bullet.color, bullet.rect)
         for potion in potions:
             pygame.draw.rect(window, potion.color, potion.rect)
-
-        # Draw aura
-        pygame.draw.circle(window, AURA_COLOR, player.rect.center, int(aura_radius), 1)
 
         draw_stats(player)
 
@@ -379,6 +378,29 @@ def handle_mob_death(mob, player, mobs, potions):
     # Drop a health potion with a very low chance
     if random.random() < 0.05:  # 5% chance to drop a potion
         potions.append(HealthPotion(mob.rect.x, mob.rect.y))
+
+class PlayerSword:
+    def __init__(self, player, angle):
+        self.player = player
+        self.angle = angle
+        self.speed = 0.1  # Speed of rotation
+
+    @property
+    def length(self):
+        # Sword length scales with strength
+        return 50 + self.player.stats['strength'] * 5
+
+    def update(self):
+        # Update the angle for rotation
+        self.angle += self.speed
+        if self.angle >= 2 * math.pi:
+            self.angle -= 2 * math.pi
+
+    def get_end_position(self):
+        # Calculate the sword's end position based on the angle and length
+        x = self.player.rect.centerx + self.length * math.cos(self.angle)
+        y = self.player.rect.centery + self.length * math.sin(self.angle)
+        return x, y
 
 if __name__ == "__main__":
     main()
