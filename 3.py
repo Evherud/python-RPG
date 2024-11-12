@@ -31,7 +31,8 @@ font = pygame.font.SysFont(None, 36)
 class Player:
     def __init__(self):
         self.rect = pygame.Rect(WIDTH // 2, HEIGHT // 2, PLAYER_SIZE, PLAYER_SIZE)
-        self.color = WHITE
+        self.base_color = WHITE
+        self.color = self.base_color
         self.base_speed = 5
         self.base_health = 100
         self.health = self.base_health
@@ -42,15 +43,17 @@ class Player:
             'strength': 5,
             'agility': 5,
             'intelligence': 5,
-            'vitality': 5,
+            'vitality': 500,
             'stat_points': 0
         }
         self.sword = PlayerSword(self, 0)  # Initialize the player's sword
+        self.invincible_time = 0
+        self.damage_time = 0
 
     @property
     def speed(self):
         # Speed increases with agility
-        return self.base_speed + self.stats['agility'] * 0.2
+        return self.base_speed + self.stats['agility'] * 0.02
 
     @property
     def max_health(self):
@@ -60,6 +63,20 @@ class Player:
     def move(self, dx, dy):
         self.rect.x += dx * self.speed
         self.rect.y += dy * self.speed
+
+    def take_damage(self, amount):
+        current_time = pygame.time.get_ticks()
+        if current_time - self.invincible_time > 300:  # 0.3 seconds of invincibility
+            self.health -= amount
+            self.color = RED
+            self.damage_time = current_time
+            self.invincible_time = current_time
+            print(f"Player hit! Health: {self.health}")
+
+    def update(self):
+        current_time = pygame.time.get_ticks()
+        if current_time - self.damage_time > 300:  # 0.3 seconds to revert color
+            self.color = self.base_color
 
     def gain_exp(self, amount):
         # Experience gain increases with intelligence
@@ -138,15 +155,25 @@ class SwordMob(Mob):
         super().__init__(x, y, BLUE, 5)
         self.swing_radius = 40  # Radius of the sword swing
         self.sword = Sword(self, self.swing_radius, 0)  # Initialize the spinning sword
+        self.speed = 2  # Speed of the SwordMob
 
     def update(self, player):
+        # Move towards the player
+        dx = player.rect.centerx - self.rect.centerx
+        dy = player.rect.centery - self.rect.centery
+        distance = math.hypot(dx, dy)
+        if distance > 0:  # Avoid division by zero
+            dx, dy = dx / distance, dy / distance  # Normalize
+            self.rect.x += dx * self.speed
+            self.rect.y += dy * self.speed
+
         # Update the sword's position
         self.sword.update()
 
         # Check for player collision with the spinning sword
         sword_x, sword_y = self.sword.get_position()
         if player.rect.collidepoint(sword_x, sword_y):
-            player.health -= 5  # Damage the player
+            player.take_damage(5)  # Damage the player
             print(f"Player hit by spinning sword! Health: {player.health}")
 
         # Swing sword if player is within range
@@ -158,7 +185,7 @@ class SwordMob(Mob):
         # Check if player is within swing radius
         distance = math.hypot(player.rect.centerx - self.rect.centerx, player.rect.centery - self.rect.centery)
         if distance < self.swing_radius:
-            player.health -= 5  # Damage the player
+            player.take_damage(5)  # Damage the player
             print(f"Player hit by sword! Health: {player.health}")
 
 # Bullet class
@@ -179,6 +206,13 @@ class HealthPotion:
     def __init__(self, x, y):
         self.rect = pygame.Rect(x, y, POTION_SIZE, POTION_SIZE)
         self.color = POTION_COLOR
+
+    def apply(self, player):
+        # Increase the player's health by the heal amount, up to the max health
+        new_health = min(player.max_health, player.health + 10 + player.stats['vitality'] * 0.5 )
+        heal_amount = new_health - player.health
+        player.health = new_health
+        print(f"Health increased by {heal_amount}! Current health: {player.health}")
 
 # Draw stats
 def draw_stats(player):
@@ -224,9 +258,10 @@ def generate_mobs(num_mobs, player):
 def main():
     player = Player()
     level = 1
-    mobs = generate_mobs(level * 5, player)  # Increase number of mobs with level
-    bullets = []  # List to store bullets
-    potions = []  # List to store health potions
+    mobs = generate_mobs(level * 5, player)
+    bullets = []
+    potions = []
+    boss = None
     clock = pygame.time.Clock()
     running = True
 
@@ -246,11 +281,9 @@ def main():
         if keys[pygame.K_DOWN]:
             dy = 1
 
-        # Stop the game when ESC is pressed
         if keys[pygame.K_ESCAPE]:
             running = False
 
-        # Distribute stat points
         if keys[pygame.K_1] and player.stats['stat_points'] > 0:
             player.distribute_stat_points(strength=1)
         if keys[pygame.K_2] and player.stats['stat_points'] > 0:
@@ -262,24 +295,61 @@ def main():
 
         player.move(dx, dy)
         player.update_sword()
+        player.update()
 
         # Check for screen transition
-        if player.rect.x < 0:
-            player.rect.x = WIDTH - PLAYER_SIZE
-            level += 1
-            mobs = generate_mobs(level * 5, player)
-        elif player.rect.x > WIDTH - PLAYER_SIZE:
-            player.rect.x = 0
-            level += 1
-            mobs = generate_mobs(level * 5, player)
-        elif player.rect.y < 0:
-            player.rect.y = HEIGHT - PLAYER_SIZE
-            level += 1
-            mobs = generate_mobs(level * 5, player)
-        elif player.rect.y > HEIGHT - PLAYER_SIZE:
-            player.rect.y = 0
-            level += 1
-            mobs = generate_mobs(level * 5, player)
+        if not boss:  # Only allow transition if no boss is present
+            if player.rect.x < 0:
+                player.rect.x = WIDTH - PLAYER_SIZE
+                level += 1
+                mobs = generate_mobs(level * 5, player)
+                potions.clear()
+                # Random chance to encounter a boss
+                if random.random() < 0.2:  # 20% chance to encounter a boss
+                    boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
+                    boss = boss_type(WIDTH // 2, HEIGHT // 2)
+                    mobs.clear()  # Clear mobs for boss encounter
+            elif player.rect.x > WIDTH - PLAYER_SIZE:
+                player.rect.x = 0
+                level += 1
+                mobs = generate_mobs(level * 5, player)
+                potions.clear()
+                if random.random() < 0.2:
+                    boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
+                    boss = boss_type(WIDTH // 2, HEIGHT // 2)
+                    mobs.clear()
+            elif player.rect.y < 0:
+                player.rect.y = HEIGHT - PLAYER_SIZE
+                level += 1
+                mobs = generate_mobs(level * 5, player)
+                potions.clear()
+                if random.random() < 0.2:
+                    boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
+                    boss = boss_type(WIDTH // 2, HEIGHT // 2)
+                    mobs.clear()
+            elif player.rect.y > HEIGHT - PLAYER_SIZE:
+                player.rect.y = 0
+                level += 1
+                mobs = generate_mobs(level * 5, player)
+                potions.clear()
+                if random.random() < 0.2:
+                    boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
+                    boss = boss_type(WIDTH // 2, HEIGHT // 2)
+                    mobs.clear()
+        else:
+            # Restrict player movement within screen boundaries during boss fight
+            player.rect.x = max(0, min(player.rect.x, WIDTH - PLAYER_SIZE))
+            player.rect.y = max(0, min(player.rect.y, HEIGHT - PLAYER_SIZE))
+
+        # Update boss if present
+        if boss:
+            boss.update(player)
+            sword_end_x, sword_end_y = player.sword.get_end_position()
+            if boss.rect.clipline(player.rect.centerx, player.rect.centery, sword_end_x, sword_end_y):
+                boss.take_damage(0.1 * player.stats['strength'])
+            if boss.hp <= 0:
+                potions.append(StatPotion(boss.rect.x, boss.rect.y, boss.stat_name, boss.stat_increase))
+                boss = None  # Boss defeated
 
         # Update mobs and handle shooting
         for mob in mobs:
@@ -291,8 +361,7 @@ def main():
         for bullet in bullets[:]:
             bullet.move()
             if bullet.rect.colliderect(player.rect):
-                player.health -= 10
-                print(f"Player hit! Health: {player.health}")
+                player.take_damage(10)
                 bullets.remove(bullet)
             elif bullet.rect.x < 0 or bullet.rect.x > WIDTH or bullet.rect.y < 0 or bullet.rect.y > HEIGHT:
                 bullets.remove(bullet)
@@ -306,38 +375,36 @@ def main():
         # Check for collisions with mobs
         for mob in mobs[:]:
             if player.rect.colliderect(mob.rect):
-                mob.hp -= player.stats['strength']  # Damage increases with strength
+                mob.hp -= player.stats['strength']
                 if mob.hp <= 0:
                     handle_mob_death(mob, player, mobs, potions)
 
         # Check for collisions with potions
         for potion in potions[:]:
             if player.rect.colliderect(potion.rect):
-                heal_amount = player.max_health * 0.2  # Heal 20% of max health
-                player.health = min(player.max_health, player.health + heal_amount)
-                print(f"Health potion collected! Health: {player.health}")
+                potion.apply(player)
                 potions.remove(potion)
 
-        # Sword effect
         sword_end_x, sword_end_y = player.sword.get_end_position()
         for mob in mobs[:]:
             if mob.rect.clipline(player.rect.centerx, player.rect.centery, sword_end_x, sword_end_y):
-                mob.hp -= 0.1 * player.stats['strength']  # Sword damage scales with strength
+                mob.hp -= 0.1 * player.stats['strength']
                 if mob.hp <= 0:
                     handle_mob_death(mob, player, mobs, potions)
 
-        # Draw everything
         window.fill(BLACK)
         pygame.draw.rect(window, player.color, player.rect)
-        # Draw the player's spinning sword
         pygame.draw.line(window, RED, player.rect.center, (int(sword_end_x), int(sword_end_y)), 3)
 
         for mob in mobs:
             pygame.draw.rect(window, mob.color, mob.rect)
-            # Draw the spinning sword for SwordMobs
             if isinstance(mob, SwordMob):
                 sword_x, sword_y = mob.sword.get_position()
                 pygame.draw.circle(window, RED, (int(sword_x), int(sword_y)), 5)
+
+        if boss:
+            pygame.draw.rect(window, boss.color, boss.rect)
+            draw_boss_health_bar(boss)
 
         for bullet in bullets:
             pygame.draw.rect(window, bullet.color, bullet.rect)
@@ -349,7 +416,6 @@ def main():
         pygame.display.flip()
         clock.tick(60)
 
-    # Display game over screen
     game_over_screen()
 
 def game_over_screen():
@@ -383,15 +449,19 @@ class PlayerSword:
     def __init__(self, player, angle):
         self.player = player
         self.angle = angle
-        self.speed = 0.1  # Speed of rotation
+
+    @property
+    def speed(self):
+        # Base speed plus a small increment based on agility
+        return max(0.05 + self.player.stats['agility'] * 0.0002, 0.2)
 
     @property
     def length(self):
-        # Sword length scales with strength
-        return 50 + self.player.stats['strength'] * 5
+        # Sword length scales with the square root of strength, rounded up
+        return 50 + math.ceil(math.sqrt(self.player.stats['strength'] * 2500))*0.13
 
     def update(self):
-        # Update the angle for rotation
+        # Update the angle for rotation using the calculated speed
         self.angle += self.speed
         if self.angle >= 2 * math.pi:
             self.angle -= 2 * math.pi
@@ -401,6 +471,77 @@ class PlayerSword:
         x = self.player.rect.centerx + self.length * math.cos(self.angle)
         y = self.player.rect.centery + self.length * math.sin(self.angle)
         return x, y
+
+class Boss(Mob):
+    def __init__(self, x, y, color, hp, stat_increase, stat_name):
+        super().__init__(x, y, color, hp)
+        self.max_hp = hp
+        self.stat_increase = stat_increase
+        self.stat_name = stat_name
+        self.base_color = color
+        self.invincible_time = 0
+        self.damage_time = 0
+
+    def update(self, player):
+        # Boss logic to move towards the player
+        dx = player.rect.centerx - self.rect.centerx
+        dy = player.rect.centery - self.rect.centery
+        distance = math.hypot(dx, dy)
+        if distance > 0:
+            dx, dy = dx / distance, dy / distance
+            self.rect.x += dx * 1  # Boss speed
+            self.rect.y += dy * 1
+
+        # Handle blinking effect
+        current_time = pygame.time.get_ticks()
+        if current_time - self.damage_time > 200:  # 0.2 seconds to revert color
+            self.color = self.base_color
+
+    def take_damage(self, amount):
+        current_time = pygame.time.get_ticks()
+        if current_time - self.invincible_time > 500:  # 0.5 seconds of invincibility
+            self.hp -= amount
+            self.color = WHITE  # Change color to indicate damage
+            self.damage_time = current_time
+            self.invincible_time = current_time
+            if self.hp <= 0:
+                self.hp = 0
+
+class StrengthBoss(Boss):
+    def __init__(self, x, y):
+        super().__init__(x, y, YELLOW, 50, 10, 'strength')
+
+class AgilityBoss(Boss):
+    def __init__(self, x, y):
+        super().__init__(x, y, GREEN, 50, 10, 'agility')
+
+class IntelligenceBoss(Boss):
+    def __init__(self, x, y):
+        super().__init__(x, y, BLUE, 50, 10, 'intelligence')
+
+class VitalityBoss(Boss):
+    def __init__(self, x, y):
+        super().__init__(x, y, RED, 50, 10, 'vitality')
+
+class StatPotion:
+    def __init__(self, x, y, stat_name, increase_amount):
+        self.rect = pygame.Rect(x, y, POTION_SIZE, POTION_SIZE)
+        self.color = POTION_COLOR
+        self.stat_name = stat_name
+        self.increase_amount = increase_amount
+
+    def apply(self, player):
+        player.stats[self.stat_name] += self.increase_amount
+        print(f"{self.stat_name.capitalize()} increased by {self.increase_amount}!")
+
+def draw_boss_health_bar(boss):
+    if boss:
+        bar_width = 200
+        bar_height = 20
+        health_ratio = boss.hp / boss.max_hp
+        health_bar_width = int(bar_width * health_ratio)
+        pygame.draw.rect(window, RED, (WIDTH // 2 - bar_width // 2, 10, bar_width, bar_height))
+        pygame.draw.rect(window, GREEN, (WIDTH // 2 - bar_width // 2, 10, health_bar_width, bar_height))
 
 if __name__ == "__main__":
     main()
