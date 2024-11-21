@@ -35,7 +35,6 @@ class Player:
         self.color = self.base_color
         self.base_speed = 5
         self.base_health = 100
-        self.health = self.base_health
         self.stats = {
             'level': 1,
             'exp': 0,
@@ -46,6 +45,7 @@ class Player:
             'vitality': 500,
             'stat_points': 0
         }
+        self.health = self.max_health
         self.sword = PlayerSword(self, 0)  # Initialize the player's sword
         self.invincible_time = 0
         self.damage_time = 0
@@ -90,12 +90,20 @@ class Player:
             print(f"Level up! You are now level {self.stats['level']}. You have {self.stats['stat_points']} stat points to distribute.")
 
     def distribute_stat_points(self, strength=0, agility=0, intelligence=0, vitality=0):
-        if self.stats['stat_points'] >= (strength + agility + intelligence + vitality):
+        total_points = strength + agility + intelligence + vitality
+        if self.stats['stat_points'] >= total_points:
             self.stats['strength'] += strength
             self.stats['agility'] += agility
             self.stats['intelligence'] += intelligence
             self.stats['vitality'] += vitality
-            self.stats['stat_points'] -= (strength + agility + intelligence + vitality)
+            self.stats['stat_points'] -= total_points
+
+            # Increase current health based on vitality investment
+            if vitality > 0:
+                health_increase = vitality * 10  # Assuming each point in vitality increases max health by 10
+                self.health = min(self.max_health, self.health + health_increase)
+                print(f"Health increased by {health_increase}! Current health: {self.health}")
+
             print(f"Distributed points: STR {strength}, AGI {agility}, INT {intelligence}, VIT {vitality}. Remaining points: {self.stats['stat_points']}")
 
     def update_sword(self):
@@ -243,25 +251,28 @@ def draw_stats(player):
     pygame.draw.rect(window, RED, (10, 170, 200 * health_ratio, 20))  # Filled bar
 
 # Generate mobs for a level
-def generate_mobs(num_mobs, player):
+def generate_mobs(base_spawn_rate, boss_encounters):
+    # Increase spawn rate based on the number of boss encounters
+    spawn_rate = min(base_spawn_rate + boss_encounters * 2, 25)  # Example: 2 extra mobs per boss encounter
     mobs = []
-    # Reduce the number of mobs based on player's intelligence
-    effective_mobs = max(1, int(num_mobs * (1 - player.stats['intelligence'] * 0.02)))
-    for _ in range(effective_mobs):
-        if random.choice([True, False]):
-            mobs.append(ShooterMob(random.randint(0, WIDTH - MOB_SIZE), random.randint(0, HEIGHT - MOB_SIZE)))
-        else:
-            mobs.append(SwordMob(random.randint(0, WIDTH - MOB_SIZE), random.randint(0, HEIGHT - MOB_SIZE)))
+    for _ in range(spawn_rate):
+        x = random.randint(0, WIDTH - MOB_SIZE)
+        y = random.randint(0, HEIGHT - MOB_SIZE)
+        mob_type = random.choice([ShooterMob, SwordMob])
+        mobs.append(mob_type(x, y))
     return mobs
 
 # Game loop
 def main():
     player = Player()
     level = 1
-    mobs = generate_mobs(level * 5, player)
+    base_spawn_rate = 5  # Base number of mobs to spawn
+    boss_encounters = 0  # Track the number of boss encounters
+    mobs = generate_mobs(base_spawn_rate, boss_encounters)
     bullets = []
     potions = []
     boss = None
+    bosses_unlocked = False
     clock = pygame.time.Clock()
     running = True
 
@@ -302,37 +313,36 @@ def main():
             if player.rect.x < 0:
                 player.rect.x = WIDTH - PLAYER_SIZE
                 level += 1
-                mobs = generate_mobs(level * 5, player)
+                mobs = generate_mobs(base_spawn_rate, boss_encounters)
                 potions.clear()
-                # Random chance to encounter a boss
-                if random.random() < 0.2:  # 20% chance to encounter a boss
+                if bosses_unlocked and random.random() < 0.2:  # 20% chance to encounter a boss
                     boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
                     boss = boss_type(WIDTH // 2, HEIGHT // 2)
                     mobs.clear()  # Clear mobs for boss encounter
             elif player.rect.x > WIDTH - PLAYER_SIZE:
                 player.rect.x = 0
                 level += 1
-                mobs = generate_mobs(level * 5, player)
+                mobs = generate_mobs(base_spawn_rate, boss_encounters)
                 potions.clear()
-                if random.random() < 0.2:
+                if bosses_unlocked and random.random() < 0.2:
                     boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
                     boss = boss_type(WIDTH // 2, HEIGHT // 2)
                     mobs.clear()
             elif player.rect.y < 0:
                 player.rect.y = HEIGHT - PLAYER_SIZE
                 level += 1
-                mobs = generate_mobs(level * 5, player)
+                mobs = generate_mobs(base_spawn_rate, boss_encounters)
                 potions.clear()
-                if random.random() < 0.2:
+                if bosses_unlocked and random.random() < 0.2:
                     boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
                     boss = boss_type(WIDTH // 2, HEIGHT // 2)
                     mobs.clear()
             elif player.rect.y > HEIGHT - PLAYER_SIZE:
                 player.rect.y = 0
                 level += 1
-                mobs = generate_mobs(level * 5, player)
+                mobs = generate_mobs(base_spawn_rate, boss_encounters)
                 potions.clear()
-                if random.random() < 0.2:
+                if bosses_unlocked and random.random() < 0.2:
                     boss_type = random.choice([StrengthBoss, AgilityBoss, IntelligenceBoss, VitalityBoss])
                     boss = boss_type(WIDTH // 2, HEIGHT // 2)
                     mobs.clear()
@@ -340,6 +350,11 @@ def main():
             # Restrict player movement within screen boundaries during boss fight
             player.rect.x = max(0, min(player.rect.x, WIDTH - PLAYER_SIZE))
             player.rect.y = max(0, min(player.rect.y, HEIGHT - PLAYER_SIZE))
+
+        # Check if player reaches level 5
+        if player.stats['level'] == 5 and not bosses_unlocked:
+            bosses_unlocked = True
+            display_boss_unlocked_message()
 
         # Update boss if present
         if boss:
@@ -350,6 +365,7 @@ def main():
             if boss.hp <= 0:
                 potions.append(StatPotion(boss.rect.x, boss.rect.y, boss.stat_name, boss.stat_increase))
                 boss = None  # Boss defeated
+                boss_encounters += 1  # Increment boss encounters
 
         # Update mobs and handle shooting
         for mob in mobs:
@@ -542,6 +558,13 @@ def draw_boss_health_bar(boss):
         health_bar_width = int(bar_width * health_ratio)
         pygame.draw.rect(window, RED, (WIDTH // 2 - bar_width // 2, 10, bar_width, bar_height))
         pygame.draw.rect(window, GREEN, (WIDTH // 2 - bar_width // 2, 10, health_bar_width, bar_height))
+
+def display_boss_unlocked_message():
+    window.fill(BLACK)
+    message_text = font.render("Bosses Unlocked!", True, WHITE)
+    window.blit(message_text, (WIDTH // 2 - message_text.get_width() // 2, HEIGHT // 2))
+    pygame.display.flip()
+    pygame.time.delay(2000)  # Pause for 2 seconds
 
 if __name__ == "__main__":
     main()
