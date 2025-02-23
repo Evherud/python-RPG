@@ -25,6 +25,7 @@ class Player:
         self.color = self.base_color
         self.base_speed = 5
         self.base_health = 100
+        self.base_mana = 100
         self.stats = {
             'level': 1,
             'exp': 0,
@@ -36,9 +37,11 @@ class Player:
             'stat_points': 0
         }
         self.health = self.max_health
+        self.mana = self.max_mana
         self.sword = PlayerSword(self, 0)  # Initialize the player's sword
         self.invincible_time = 0
         self.damage_time = 0
+        self.last_mana_regen_time = pygame.time.get_ticks()  # Timer for mana regeneration
 
     @property
     def speed(self):
@@ -49,6 +52,16 @@ class Player:
     def max_health(self):
         # Max health increases with vitality
         return self.base_health + self.stats['vitality'] * 10
+
+    @property
+    def max_mana(self):
+        # Max mana increases with intelligence
+        return self.base_mana + self.stats['intelligence'] * 5
+
+    @property
+    def mana_regeneration(self):
+        # Mana regeneration rate
+        return 1 + self.stats['intelligence'] * 0.02
 
     def move(self, dx, dy):
         self.rect.x += dx * self.speed
@@ -63,10 +76,47 @@ class Player:
             self.invincible_time = current_time
             print(f"Player hit! Health: {self.health}")
 
-    def update(self):
+    def update(self, launching_projectile=False):
         current_time = pygame.time.get_ticks()
         if current_time - self.damage_time > 300:  # 0.3 seconds to revert color
             self.color = self.base_color
+
+        # Regenerate mana every 0.5 second if not launching projectiles
+        if not launching_projectile and current_time - self.last_mana_regen_time > 500:
+            self.mana = min(self.max_mana, self.mana + self.mana_regeneration)
+            self.last_mana_regen_time = current_time
+
+    def launch_projectile(self):
+        if self.mana >= 10:
+            self.mana -= 10
+            # Get the sword's end position and angle
+            sword_end_x, sword_end_y = self.sword.get_end_position()
+            sword_angle = self.sword.angle
+
+            # Create a list to store projectiles
+            projectiles = []
+
+            # Define offsets for the staggered pattern, rotated by -90 degrees
+            offsets = [
+                (0, 0),  # Center
+                (10, -10),  # Top middle
+                (-10, -10),  # Bottom middle
+                (20, -20),  # Far top
+                (-20, -20)  # Far bottom
+            ]
+
+            # Use the sword's original angle for movement
+            movement_angle = sword_angle
+
+            # Generate projectiles in a rotated staggered pattern
+            for offset_x, offset_y in offsets:
+                # Rotate the offset by the sword's angle minus 90 degrees
+                rotated_offset_x = offset_x * math.cos(sword_angle - math.pi / 2) - offset_y * math.sin(sword_angle - math.pi / 2)
+                rotated_offset_y = offset_x * math.sin(sword_angle - math.pi / 2) + offset_y * math.cos(sword_angle - math.pi / 2)
+                projectiles.append(Projectile(sword_end_x + rotated_offset_x, sword_end_y + rotated_offset_y, movement_angle, self.stats['intelligence']))
+
+            return projectiles
+        return []
 
     def gain_exp(self, amount):
         # Experience gain increases with intelligence
@@ -320,4 +370,24 @@ class StatPotion:
     def apply(self, player):
         player.stats[self.stat_name] += self.increase_amount
         print(f"{self.stat_name.capitalize()} increased by {self.increase_amount}!")
+
+class Projectile:
+    def __init__(self, x, y, angle, intelligence):
+        self.rect = pygame.Rect(x, y, BULLET_SIZE, BULLET_SIZE)
+        self.color = YELLOW
+        self.damage = 10 + intelligence * 0.1
+        self.speed = 10
+        self.direction = self.calculate_direction(angle)  # Use the original angle for movement
+
+    def calculate_direction(self, angle):
+        # Calculate the direction based on the given angle
+        return math.cos(angle), math.sin(angle)
+
+    def move(self):
+        dx, dy = self.direction
+        self.rect.x += dx * self.speed
+        self.rect.y += dy * self.speed
+
+    def draw(self, surface):
+        pygame.draw.rect(surface, self.color, self.rect)
 

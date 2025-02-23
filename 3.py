@@ -56,17 +56,11 @@ def draw_stats(player):
     pygame.draw.rect(window, WHITE, (10, 170, 200, 20), 2)  # Border
     pygame.draw.rect(window, RED, (10, 170, 200 * health_ratio, 20))  # Filled bar
 
-# Generate mobs for a level
-def generate_mobs(base_spawn_rate, boss_encounters):
-    # Increase spawn rate based on the number of boss encounters
-    spawn_rate = min(base_spawn_rate + boss_encounters * 2, 25)  # Example: 2 extra mobs per boss encounter
-    mobs = []
-    for _ in range(spawn_rate):
-        x = random.randint(0, WIDTH - MOB_SIZE)
-        y = random.randint(0, HEIGHT - MOB_SIZE)
-        mob_type = random.choice([ShooterMob, SwordMob])
-        mobs.append(mob_type(x, y))
-    return mobs
+    # Draw mana bar
+    mana_ratio = player.mana / player.max_mana
+    pygame.draw.rect(window, WHITE, (10, 200, 200, 20), 2)  # Border
+    pygame.draw.rect(window, BLUE, (10, 200, 200 * mana_ratio, 20))  # Filled bar
+
 
 # Game loop
 def main():
@@ -77,15 +71,36 @@ def main():
     mobs = gameplay.generate_mobs(base_spawn_rate, boss_encounters)
     bullets = []
     potions = []
+    projectiles = []  # List to store projectiles
     boss = None
     bosses_unlocked = False
     clock = pygame.time.Clock()
     running = True
+    slow_mode = False  # Flag to track slow mode
+
+    # Load the Samurai image
+    samurai_face = pygame.image.load('Samurai.webp')
+    samurai_face = pygame.transform.scale(samurai_face, (PLAYER_SIZE, PLAYER_SIZE))  # Scale to fit the player
+
+    # Load enemy images
+    archer_icon = pygame.image.load('archer.jpg')
+    knight_icon = pygame.image.load('knight.webp')
+    archer_icon = pygame.transform.scale(archer_icon, (MOB_SIZE, MOB_SIZE))  # Scale to fit the mob
+    knight_icon = pygame.transform.scale(knight_icon, (MOB_SIZE, MOB_SIZE))  # Scale to fit the mob
+
+    # Load the background image
+    background = pygame.image.load('grass.jpg')
+    background = pygame.transform.scale(background, (WIDTH, HEIGHT))  # Scale to fit the window
 
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m:
+                    slow_mode = not slow_mode  # Toggle slow mode
+                elif event.key == pygame.K_ESCAPE:
+                    character_menu(player)  # Open character menu
 
         keys = pygame.key.get_pressed()
         dx, dy = 0, 0
@@ -98,8 +113,12 @@ def main():
         if keys[pygame.K_DOWN]:
             dy = 1
 
-        if keys[pygame.K_ESCAPE]:
-            running = False
+        launching_projectile = False
+        if keys[pygame.K_SPACE]:
+            new_projectiles = player.launch_projectile()
+            if new_projectiles:
+                projectiles.extend(new_projectiles)
+                launching_projectile = True
 
         if keys[pygame.K_1] and player.stats['stat_points'] > 0:
             player.distribute_stat_points(strength=1)
@@ -112,7 +131,21 @@ def main():
 
         player.move(dx, dy)
         player.update_sword()
-        player.update()
+        player.update(launching_projectile)
+
+        # Move projectiles
+        for projectile in projectiles[:]:
+            projectile.move()
+            if projectile.rect.x > WIDTH or projectile.rect.x < 0 or projectile.rect.y > HEIGHT or projectile.rect.y < 0:
+                projectiles.remove(projectile)
+            else:
+                for mob in mobs[:]:
+                    if projectile.rect.colliderect(mob.rect):
+                        mob.hp -= projectile.damage
+                        projectiles.remove(projectile)
+                        if mob.hp <= 0:
+                            gameplay.handle_mob_death(mob, player, mobs, potions)
+                        break
 
         # Check for screen transition
         if not boss:  # Only allow transition if no boss is present
@@ -167,7 +200,7 @@ def main():
             boss.update(player)
             sword_end_x, sword_end_y = player.sword.get_end_position()
             if boss.rect.clipline(player.rect.centerx, player.rect.centery, sword_end_x, sword_end_y):
-                boss.take_damage(0.1 * player.stats['strength'])
+                boss.take_damage(0.1 * player.stats['strength']+2)
             if boss.hp <= 0:
                 potions.append(gameplay.StatPotion(boss.rect.x, boss.rect.y, boss.stat_name, boss.stat_increase))
                 boss = None  # Boss defeated
@@ -214,12 +247,23 @@ def main():
                 if mob.hp <= 0:
                     gameplay.handle_mob_death(mob, player, mobs, potions)
 
-        window.fill(BLACK)
-        pygame.draw.rect(window, player.color, player.rect)
+        # Draw the background image
+        window.blit(background, (0, 0))
+
+        # Draw the samurai face on the player's rectangle
+        window.blit(samurai_face, player.rect.topleft)
+
         pygame.draw.line(window, RED, player.rect.center, (int(sword_end_x), int(sword_end_y)), 3)
 
         for mob in mobs:
-            pygame.draw.rect(window, mob.color, mob.rect)
+            # Draw the appropriate icon on each mob
+            if isinstance(mob, gameplay.ShooterMob):
+                window.blit(archer_icon, mob.rect.topleft)
+            elif isinstance(mob, gameplay.Mob):
+                window.blit(knight_icon, mob.rect.topleft)
+            else:
+                pygame.draw.rect(window, mob.color, mob.rect)
+
             if isinstance(mob, gameplay.SwordMob):
                 sword_x, sword_y = mob.sword.get_position()
                 pygame.draw.circle(window, RED, (int(sword_x), int(sword_y)), 5)
@@ -233,10 +277,18 @@ def main():
         for potion in potions:
             pygame.draw.rect(window, potion.color, potion.rect)
 
+        for projectile in projectiles:
+            projectile.draw(window)
+
         draw_stats(player)
 
         pygame.display.flip()
-        clock.tick(60)
+
+        # Adjust the game speed
+        if slow_mode:
+            clock.tick(12)  # Slow down the game to 12 FPS
+        else:
+            clock.tick(60)  # Normal game speed at 60 FPS
 
     game_over_screen()
 
@@ -260,12 +312,6 @@ def game_over_screen():
 
     pygame.quit()
 
-def handle_mob_death(mob, player, mobs, potions):
-    player.gain_exp(20)
-    mobs.remove(mob)
-    # Drop a health potion with a very low chance
-    if random.random() < 0.05:  # 5% chance to drop a potion
-        potions.append(HealthPotion(mob.rect.x, mob.rect.y))
 
 class PlayerSword:
     def __init__(self, player, angle):
@@ -309,6 +355,58 @@ def display_boss_unlocked_message():
     window.blit(message_text, (WIDTH // 2 - message_text.get_width() // 2, HEIGHT // 2))
     pygame.display.flip()
     pygame.time.delay(2000)  # Pause for 2 seconds
+
+def character_menu(player):
+    # Load the Samurai image
+    samurai_image = pygame.image.load('Samurai.webp')
+    samurai_image = pygame.transform.scale(samurai_image, (300, 500))  # Scale the image as needed
+
+    menu_running = True
+    while menu_running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    menu_running = False  # Close the menu when 'ESC' is pressed again
+                elif event.key == pygame.K_1 and player.stats['stat_points'] > 0:
+                    player.distribute_stat_points(strength=1)
+                elif event.key == pygame.K_2 and player.stats['stat_points'] > 0:
+                    player.distribute_stat_points(agility=1)
+                elif event.key == pygame.K_3 and player.stats['stat_points'] > 0:
+                    player.distribute_stat_points(intelligence=1)
+                elif event.key == pygame.K_4 and player.stats['stat_points'] > 0:
+                    player.distribute_stat_points(vitality=1)
+
+        # Fill the window with a semi-transparent overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT))
+        overlay.set_alpha(128)  # Set transparency level
+        overlay.fill(BLACK)
+        window.blit(overlay, (0, 0))
+
+        # Display the Samurai image on the left side
+        window.blit(samurai_image, (50, HEIGHT // 2 - samurai_image.get_height() // 2))
+
+        # Display character stats on the right side
+        stats_text = font.render(f"Character Stats", True, WHITE)
+        window.blit(stats_text, (WIDTH - 250, 50))
+
+        # Display each stat with upgrade option
+        y_offset = 100
+        for i, (stat, value) in enumerate(player.stats.items()):
+            stat_text = font.render(f"{stat.upper()}: {value} [+]", True, WHITE)
+            window.blit(stat_text, (WIDTH - 250, y_offset))
+            y_offset += 40
+
+        # Display health and mana
+        health_text = font.render(f"Health: {player.health}/{player.max_health}", True, WHITE)
+        mana_text = font.render(f"Mana: {player.mana}/{player.max_mana}", True, WHITE)
+        window.blit(health_text, (WIDTH - 250, y_offset))
+        y_offset += 40
+        window.blit(mana_text, (WIDTH - 250, y_offset))
+
+        pygame.display.flip()
 
 if __name__ == "__main__":
     main()
