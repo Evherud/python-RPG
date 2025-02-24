@@ -7,16 +7,22 @@ class TalentNode:
         self.boost = boost
         self.rarity = rarity
         self.learned = False
+        self.learnable = False
         self.position = position
+        self.description = f"Boosts {self.stat} by {self.boost} points."
         self.children = {'up': None, 'down': None, 'left': None, 'right': None}
 
     def learn(self, player, occupied_positions):
-        if not self.learned and player.talent_points > 0:
+        if self.learnable and player.talent_points > 0:
             player.stats[self.stat] += self.boost
             player.talent_points -= 1
             self.learned = True
+            self.learnable = False
             print(f"Learned {self.stat} node: +{self.boost} {self.stat}")
-            generate_children(self, occupied_positions)  # Generate new children when learned
+            for child in self.children.values():
+                if child:
+                    child.learnable = True  # Make children learnable
+                    generate_children(child, occupied_positions)  # Generate new observable nodes around them
 
     def draw(self, surface, offset, mouse_pos):
         adjusted_position = (self.position[0] + offset[0], self.position[1] + offset[1])
@@ -24,15 +30,23 @@ class TalentNode:
         
         if self.learned:
             color = (0, 255, 0)  # Green if learned
-        elif is_hovered:
-            color = (255, 255, 0)  # Yellow if hovered
+        elif self.learnable:
+            color = (255, 255, 255)  # White if learnable
+            if is_hovered:
+                color = (255, 255, 0)  # Yellow if hovered
         else:
-            color = (255, 255, 255)  # White otherwise
+            color = (100, 100, 100)  # Grey if observable
 
         pygame.draw.circle(surface, color, adjusted_position, 20)
         font = pygame.font.SysFont(None, 24)
         text = font.render(self.stat[0].upper(), True, (0, 0, 0))
         surface.blit(text, (adjusted_position[0] - 5, adjusted_position[1] - 10))
+
+        # Display description if hovered
+        if is_hovered:
+            description_font = pygame.font.SysFont(None, 20)
+            description_text = description_font.render(self.description, True, (255, 255, 255))
+            surface.blit(description_text, (adjusted_position[0] + 25, adjusted_position[1] - 10))
 
         # Draw children
         for direction, child in self.children.items():
@@ -45,7 +59,10 @@ def generate_talent_tree():
     stat = random.choice(['strength', 'agility', 'intelligence', 'vitality'])
     boost = random.randint(1, 5)
     root_node = TalentNode(stat, boost, position=(400, 300))
-    return [root_node], {(400, 300)}
+    root_node.learnable = True  # Root node is learnable initially
+    occupied_positions = {(400, 300)}
+    generate_children(root_node, occupied_positions)  # Generate initial observable nodes
+    return [root_node], occupied_positions
 
 def generate_children(node, occupied_positions):
     directions = {
@@ -57,12 +74,13 @@ def generate_children(node, occupied_positions):
     
     for direction, (dx, dy) in directions.items():
         new_position = (node.position[0] + dx, node.position[1] + dy)
-        if node.children[direction] is None and new_position not in occupied_positions and random.random() < 0.4:
+        if node.children[direction] is None and new_position not in occupied_positions and random.random() < 0.5:
             stat = random.choice(['strength', 'agility', 'intelligence', 'vitality'])
             boost = random.randint(1, 5)
             child_node = TalentNode(stat, boost, position=new_position)
             node.children[direction] = child_node
             occupied_positions.add(new_position)
+            child_node.learnable = False  # New nodes are observable
 
 def draw_talent_tree(surface, nodes, offset, mouse_pos):
     for node in nodes:
@@ -73,7 +91,7 @@ def handle_click(nodes, player, mouse_pos, offset, occupied_positions):
         if node is None:
             continue
         adjusted_position = (node.position[0] + offset[0], node.position[1] + offset[1])
-        if not node.learned and pygame.Rect(adjusted_position[0] - 20, adjusted_position[1] - 20, 40, 40).collidepoint(mouse_pos):
+        if node.learnable and pygame.Rect(adjusted_position[0] - 20, adjusted_position[1] - 20, 40, 40).collidepoint(mouse_pos):
             node.learn(player, occupied_positions)
             return
         handle_click([child for child in node.children.values() if child], player, mouse_pos, offset, occupied_positions)
