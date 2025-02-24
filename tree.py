@@ -1,6 +1,14 @@
 import pygame
 import random
 
+# Define rare talents
+RARE_TALENTS = {
+    'strength': "ALL your strength common talents give extra 2 stats",
+    'agility': "ALL your agility common talents give extra 2 stats",
+    'intelligence': "ALL your intelligence common talents give extra 2 stats",
+    'vitality': "ALL your vitality common talents give extra 2 stats"
+}
+
 class TalentNode:
     def __init__(self, stat, boost, rarity='common', position=(0, 0)):
         self.stat = stat
@@ -9,13 +17,27 @@ class TalentNode:
         self.learned = False
         self.learnable = False
         self.position = position
-        self.description = f"Boosts {self.stat} by {self.boost} points."
         self.children = {'up': None, 'down': None, 'left': None, 'right': None}
 
+    def generate_description(self, player):
+        if self.rarity == 'rare':
+            return RARE_TALENTS[self.stat]
+        else:
+            return f"Boosts {self.stat} by {self.boost} (+{player.additional_points[self.stat]}) points."
+
     def learn(self, player, occupied_positions):
-        if self.learnable and player.talent_points > 0:
-            player.stats[self.stat] += self.boost
-            player.talent_points -= 1
+        cost = 2 if self.rarity == 'rare' else 1
+        if self.learnable and player.talent_points >= cost:
+            if self.rarity == 'rare':
+                # Apply rare talent effect
+                player.additional_points[self.stat] += 2
+                for node in player.talent_tree:
+                    if node.stat == self.stat and node.rarity == 'common':
+                        node.description = node.generate_description(player)  # Update description
+            else:
+                player.stats[self.stat] += self.boost + player.additional_points[self.stat]
+
+            player.talent_points -= cost
             self.learned = True
             self.learnable = False
             print(f"Learned {self.stat} node: +{self.boost} {self.stat}")
@@ -24,36 +46,47 @@ class TalentNode:
                     child.learnable = True  # Make children learnable
                     generate_children(child, occupied_positions)  # Generate new observable nodes around them
 
-    def draw(self, surface, offset, mouse_pos):
-        adjusted_position = (self.position[0] + offset[0], self.position[1] + offset[1])
-        is_hovered = pygame.Rect(adjusted_position[0] - 20, adjusted_position[1] - 20, 40, 40).collidepoint(mouse_pos)
+    def draw(self, surface, offset, mouse_pos, scale, player):
+        adjusted_position = ((self.position[0] + offset[0]) * scale, (self.position[1] + offset[1]) * scale)
+        is_hovered = pygame.Rect(adjusted_position[0] - 20 * scale, adjusted_position[1] - 20 * scale, 40 * scale, 40 * scale).collidepoint(mouse_pos)
         
         if self.learned:
-            color = (0, 255, 0)  # Green if learned
+            if self.rarity == 'rare':
+                color = (0, 100, 255)  # Distinct blue for learned rare talents
+            else:
+                color = (0, 255, 0)  # Green if learned and common
         elif self.learnable:
-            color = (255, 255, 255)  # White if learnable
-            if is_hovered:
-                color = (255, 255, 0)  # Yellow if hovered
+            if self.rarity == 'rare':
+                color = (0, 0, 255)  # Bright blue if learnable and rare
+                if is_hovered:
+                    color = (100, 100, 255)  # Lighter blue if hovered
+            else:
+                color = (255, 255, 255)  # White if learnable
+                if is_hovered:
+                    color = (255, 255, 0)  # Yellow if hovered
         else:
-            color = (100, 100, 100)  # Grey if observable
+            if self.rarity == 'rare':
+                color = (0, 0, 100)  # Dull blue if observable and rare
+            else:
+                color = (100, 100, 100)  # Grey if observable
 
-        pygame.draw.circle(surface, color, adjusted_position, 20)
-        font = pygame.font.SysFont(None, 24)
+        pygame.draw.circle(surface, color, adjusted_position, 20 * scale)
+        font = pygame.font.SysFont(None, int(24 * scale))
         text = font.render(self.stat[0].upper(), True, (0, 0, 0))
-        surface.blit(text, (adjusted_position[0] - 5, adjusted_position[1] - 10))
+        surface.blit(text, (adjusted_position[0] - 5 * scale, adjusted_position[1] - 10 * scale))
 
         # Display description if hovered
         if is_hovered:
-            description_font = pygame.font.SysFont(None, 20)
-            description_text = description_font.render(self.description, True, (255, 255, 255))
-            surface.blit(description_text, (adjusted_position[0] + 25, adjusted_position[1] - 10))
+            description_font = pygame.font.SysFont(None, int(20 * scale))
+            description_text = description_font.render(self.generate_description(player), True, (255, 255, 255))
+            surface.blit(description_text, (adjusted_position[0] + 25 * scale, adjusted_position[1] - 10 * scale))
 
         # Draw children
         for direction, child in self.children.items():
             if child:
-                adjusted_end = (child.position[0] + offset[0], child.position[1] + offset[1])
+                adjusted_end = ((child.position[0] + offset[0]) * scale, (child.position[1] + offset[1]) * scale)
                 pygame.draw.line(surface, (255, 255, 255), adjusted_position, adjusted_end)
-                child.draw(surface, offset, mouse_pos)
+                child.draw(surface, offset, mouse_pos, scale, player)
 
 def generate_talent_tree():
     stat = random.choice(['strength', 'agility', 'intelligence', 'vitality'])
@@ -77,26 +110,27 @@ def generate_children(node, occupied_positions):
         if node.children[direction] is None and new_position not in occupied_positions and random.random() < 0.5:
             stat = random.choice(['strength', 'agility', 'intelligence', 'vitality'])
             boost = random.randint(1, 5)
-            child_node = TalentNode(stat, boost, position=new_position)
+            rarity = 'rare' if random.random() < 0.15 else 'common'
+            child_node = TalentNode(stat, boost, rarity, position=new_position)
             node.children[direction] = child_node
             occupied_positions.add(new_position)
             child_node.learnable = False  # New nodes are observable
 
-def draw_talent_tree(surface, nodes, offset, mouse_pos):
+def draw_talent_tree(surface, nodes, offset, mouse_pos, scale, player):
     for node in nodes:
-        node.draw(surface, offset, mouse_pos)
+        node.draw(surface, offset, mouse_pos, scale, player)
 
-def handle_click(nodes, player, mouse_pos, offset, occupied_positions):
+def handle_click(nodes, player, mouse_pos, offset, occupied_positions, scale):
     for node in nodes:
         if node is None:
             continue
-        adjusted_position = (node.position[0] + offset[0], node.position[1] + offset[1])
-        if node.learnable and pygame.Rect(adjusted_position[0] - 20, adjusted_position[1] - 20, 40, 40).collidepoint(mouse_pos):
+        adjusted_position = ((node.position[0] + offset[0]) * scale, (node.position[1] + offset[1]) * scale)
+        if node.learnable and pygame.Rect(adjusted_position[0] - 20 * scale, adjusted_position[1] - 20 * scale, 40 * scale, 40 * scale).collidepoint(mouse_pos):
             node.learn(player, occupied_positions)
             return
-        handle_click([child for child in node.children.values() if child], player, mouse_pos, offset, occupied_positions)
+        handle_click([child for child in node.children.values() if child], player, mouse_pos, offset, occupied_positions, scale)
 
-def draw_ui(surface, player, mouse_pos):
+def draw_ui(surface, player, mouse_pos, show_stats):
     font = pygame.font.SysFont(None, 36)
     text = font.render(f"Talent Points: {player.talent_points}", True, (255, 255, 255))
     surface.blit(text, (10, 10))
@@ -113,6 +147,14 @@ def draw_ui(surface, player, mouse_pos):
 
     plus_text = font.render("+", True, (0, 0, 0))
     surface.blit(plus_text, (25 + text_width, 5))
+
+    # Draw stats dropdown
+    if show_stats:
+        stats_text = [f"{stat.capitalize()}: {value}" for stat, value in player.stats.items()]
+        for i, stat_text in enumerate(stats_text):
+            stat_surface = font.render(stat_text, True, (255, 255, 255))
+            surface.blit(stat_surface, (10, 50 + i * 30))
+
     return plus_button
 
 # Initialize Pygame
@@ -120,7 +162,7 @@ pygame.init()
 
 # Set up display
 WIDTH, HEIGHT = 800, 600
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Talent Tree")
 
 # Set up clock
@@ -134,13 +176,17 @@ class Player:
     def __init__(self):
         self.stats = {'strength': 0, 'agility': 0, 'intelligence': 0, 'vitality': 0}
         self.talent_points = 100
+        self.talent_tree = talent_tree  # Reference to the talent tree
+        self.additional_points = {stat: 0 for stat in self.stats}  # Additional points for each stat
 
 player = Player()
 
-# Camera offset
+# Camera offset and scale
 offset = [0, 0]
+scale = 1.0
 dragging = False
 last_mouse_pos = None
+show_stats = False
 
 # Main loop
 running = True
@@ -155,26 +201,32 @@ while running:
                 dragging = True
                 last_mouse_pos = pygame.mouse.get_pos()
             elif event.button == 3:
-                handle_click(talent_tree, player, mouse_pos, offset, occupied_positions)
+                handle_click(talent_tree, player, mouse_pos, offset, occupied_positions, scale)
         elif event.type == pygame.MOUSEBUTTONUP:
             if event.button == 1:
                 dragging = False
                 # Check if the '+' button was clicked
-                plus_button = draw_ui(screen, player, mouse_pos)
+                plus_button = draw_ui(screen, player, mouse_pos, show_stats)
                 if plus_button.collidepoint(mouse_pos):
                     player.talent_points += 100
+        elif event.type == pygame.MOUSEWHEEL:
+            scale += event.y * 0.1
+            scale = max(0.5, min(2.0, scale))  # Limit zoom level
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_c:
+                show_stats = not show_stats
 
     if dragging:
         mouse_pos = pygame.mouse.get_pos()
         dx = mouse_pos[0] - last_mouse_pos[0]
         dy = mouse_pos[1] - last_mouse_pos[1]
-        offset[0] += dx
-        offset[1] += dy
+        offset[0] += dx / scale
+        offset[1] += dy / scale
         last_mouse_pos = mouse_pos
 
     screen.fill((0, 0, 0))
-    draw_talent_tree(screen, talent_tree, offset, mouse_pos)
-    plus_button = draw_ui(screen, player, mouse_pos)
+    draw_talent_tree(screen, talent_tree, offset, mouse_pos, scale, player)
+    plus_button = draw_ui(screen, player, mouse_pos, show_stats)
     pygame.display.flip()
     clock.tick(60)
 
